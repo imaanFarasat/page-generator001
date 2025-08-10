@@ -741,26 +741,24 @@ const ContentGenerator = () => {
     setSavingToDatabase(true);
     
     try {
-      // Use the parsed content structure for database save
-      const contentData = {
-        title: generatedContent.content.body.h1, // Backend expects 'title'
-        topic: formData.h1, // Backend expects 'topic'
-        content: generatedContent.content, // Backend expects 'content' object
+      // Use the new save endpoint with the correct data structure
+      const saveData = {
+        plainContent: generatedContent.rawContent || generatedContent.content,
+        h1: formData.h1,
+        h2s: generatedContent.originalH2s || generatedContent.cleanedH2s || h2sArray,
+        handle: formData.handle || generatedContent.handle || generateHandle(formData.h1),
+        faqCount: generatedContent.faqCount || faqCount,
+        location: selectedLocation ? availableLocations.find(loc => loc.placename === selectedLocation) : null,
         category: formData.category || 'general',
-        status: 'draft',
-        handle: formData.handle || generatedContent.handle || generateHandle(formData.h1), // Include handle for URL routing
-        faq_count: generatedContent.faqCount || faqCount, // Include FAQ count to avoid recalculation
-        seo_title: editableMetaTitle || generatedContent.content.head?.title || `Best ${formData.h1} Guide - Complete Information & Tips`,
-        seo_description: editableMetaDescription || generatedContent.content.head?.meta?.description || `Discover everything about ${formData.h1}. Get expert insights, tips, and comprehensive information. Learn the best practices and latest trends.`,
-        location: selectedLocation ? availableLocations.find(loc => loc.placename === selectedLocation) : null
+        tags: formData.tags ? formData.tags.split(',').map(tag => tag.trim()) : []
       };
 
-      await axios.post('/api/content', contentData);
+      const response = await axios.post('/api/generate/save', saveData);
       
       toast.success('Content saved to database successfully!');
       
       // Optionally redirect to content viewer
-      // window.location.href = `/content/${response.data.id}`;
+      // window.location.href = `/content/${response.data.public_id}`;
       
     } catch (error) {
       console.error('Error saving content:', error);

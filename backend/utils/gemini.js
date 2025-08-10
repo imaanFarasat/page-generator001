@@ -15,7 +15,7 @@ class GeminiService {
     console.log('✅ Gemini service initialized with model: gemini-1.5-pro');
   }
 
-  async generateContent(h1, h2s, faqCount = 20, location = null, handle = null, category = 'General', retryCount = 0) {
+  async generateContent(h1, h2s, faqCount = 20, location = null, handle = null, category = 'General', tags = null, retryCount = 0) {
     try {
       const prompt = this.buildPrompt(h1, h2s, faqCount);
       console.log('Generated prompt:', prompt);
@@ -30,7 +30,7 @@ class GeminiService {
       console.log('Response length:', text.length);
       
       // Restructure plain content into JSON format
-      const content = this.restructureContent(text, h1, h2s, faqCount, location, handle, category);
+      const content = this.restructureContent(text, h1, h2s, faqCount, location, handle, category, tags);
       console.log('Restructured content:', JSON.stringify(content, null, 2));
       
       // Validate content structure
@@ -46,7 +46,7 @@ class GeminiService {
       
       if (retryCount < this.maxRetries) {
         console.log(`Retrying content generation (attempt ${retryCount + 1}/${this.maxRetries})`);
-        return this.generateContent(h1, h2s, faqCount, location, handle, category, retryCount + 1);
+        return this.generateContent(h1, h2s, faqCount, location, handle, category, tags, retryCount + 1);
       }
       
       throw new Error(`Content generation failed after ${this.maxRetries} attempts: ${error.message}`);
@@ -71,7 +71,7 @@ META DESCRIPTION:
 [Write an SEO-optimized meta description for ${h1} - EXACTLY 150-160 characters, compelling and descriptive, include primary keyword]
 
 INTRODUCTION:
-[Write exactly 1 engaging introduction paragraph about ${h1} - 3-4 sentences only]
+[Write exactly 1 engaging introduction paragraph about ${h1} - 3-4 sentences only. This should be a proper paragraph explaining what ${h1} is and why it's important. DO NOT just repeat the title.]
 
 SECTION 1: ${h2s[0]}
 [Write exactly 2 detailed paragraphs about ${h2s[0]} - 3-4 sentences each paragraph]
@@ -116,7 +116,7 @@ Generate high-quality, informative content that provides real value to readers w
   }
 
   // Method to restructure plain content into the expected JSON format
-  restructureContent(plainContent, h1, h2s, faqCount, location = null, handle = null, category = 'General') {
+  restructureContent(plainContent, h1, h2s, faqCount, location = null, handle = null, category = 'General', tags = null) {
     console.log('=== CONTENT RESTRUCTURING START ===');
     console.log('Input H2s:', h2s);
     console.log('FAQ count:', faqCount);
@@ -149,10 +149,20 @@ Generate high-quality, informative content that provides real value to readers w
           // Extract meta description
           metaDescription = trimmedSection.replace(/^META DESCRIPTION:?/i, '').trim();
           console.log('Extracted meta description:', metaDescription.substring(0, 100));
-        } else if (trimmedSection.startsWith('INTRODUCTION:') || trimmedSection.startsWith('INTRODUCTION') || trimmedSection.startsWith('INTRO:')) {
-          // Extract introduction - be more flexible
-          intro = trimmedSection.replace(/^INTRODUCTION:?/i, '').trim();
-          console.log('Extracted intro:', intro.substring(0, 100));
+                 } else if (trimmedSection.startsWith('INTRODUCTION:') || trimmedSection.startsWith('INTRODUCTION') || trimmedSection.startsWith('INTRO:')) {
+           // Extract introduction - be more flexible and clean it
+           intro = trimmedSection.replace(/^INTRODUCTION:?/i, '').trim();
+           // Clean the intro by removing any remaining metadata including H1 Title
+           intro = intro.replace(/^H1 Title:\s*/i, '').trim();
+           intro = this.cleanContent(intro);
+           
+           // Validate that intro is not just the H1 title
+           if (intro.toLowerCase().trim() === h1.toLowerCase().trim()) {
+             console.log('⚠️ Intro is just the H1 title, will use fallback');
+             intro = ''; // Force fallback
+           }
+           
+           console.log('Extracted intro:', intro.substring(0, 100));
         } else if (trimmedSection.match(/^(SECTION \d+:|SECTION:|H2:|##)/)) {
           console.log('Found section header:', trimmedSection.substring(0, 100));
           
@@ -275,6 +285,9 @@ Generate high-quality, informative content that provides real value to readers w
             console.log('Final paragraphs count:', paragraphs.length);
             console.log('Final bullets count:', bullets.length);
             
+            // Clean and format paragraphs
+            paragraphs = paragraphs.map(p => this.cleanContent(p));
+            
             // Ensure we have at least 2 paragraphs and 3 bullets
             if (paragraphs.length < 2) {
               // Try to create paragraphs from the content
@@ -282,75 +295,46 @@ Generate high-quality, informative content that provides real value to readers w
               if (words.length > 20) {
                 const midPoint = Math.floor(words.length / 2);
                 paragraphs = [
-                  words.slice(0, midPoint).join(' '),
-                  words.slice(midPoint).join(' ')
+                  this.cleanContent(words.slice(0, midPoint).join(' ')),
+                  this.cleanContent(words.slice(midPoint).join(' '))
                 ];
               } else {
                 paragraphs = [
-                  content.length > 100 ? content.substring(0, content.length / 2) : content,
-                  content.length > 100 ? content.substring(content.length / 2) : content
+                  this.cleanContent(content.length > 100 ? content.substring(0, content.length / 2) : content),
+                  this.cleanContent(content.length > 100 ? content.substring(content.length / 2) : content)
                 ];
               }
               console.log('Created fallback paragraphs');
             }
             
+            // Clean and format bullets
+            bullets = bullets.map(b => this.cleanContent(b));
+            
             if (bullets.length < 3) {
               // Create more meaningful bullets from the content
               const sentences = content.match(/[^.!?]+[.!?]/g) || [];
               if (sentences.length >= 3) {
-                bullets = sentences.slice(0, 3).map(s => s.trim());
+                bullets = sentences.slice(0, 3).map(s => this.cleanContent(s.trim()));
               } else {
                 // Split content into key points
                 const parts = content.split(/[.!?]/).filter(part => part.trim().length > 20);
-                bullets = parts.slice(0, 3).map(part => part.trim());
+                bullets = parts.slice(0, 3).map(part => this.cleanContent(part.trim()));
               }
               console.log('Created fallback bullets');
             }
             
-            sectionsArray.push({
-              h2: h2Title,
-              paragraphs: paragraphs.slice(0, 2),
-              bullets: bullets.slice(0, 4)
-            });
+                         sectionsArray.push({
+               section_heading: h2Title,
+               paragraphs: paragraphs.slice(0, 2),
+               bullets: bullets.slice(0, 4)
+             });
             
             console.log('Added section to array:', h2Title);
           }
         } else if (trimmedSection.startsWith('FAQS:') || trimmedSection.startsWith('FAQ:') || trimmedSection.startsWith('FREQUENTLY ASKED QUESTIONS:')) {
           console.log('Found FAQ section');
-          // Extract FAQs more flexibly
-          const faqContent = trimmedSection.replace(/^FAQS?:?/i, '').replace(/^FREQUENTLY ASKED QUESTIONS:?/i, '').trim();
-          
-          // Try different FAQ patterns
-          const faqPatterns = [
-            /(?:Q\d*[:\-]?\s*|Question\s*\d*[:\-]?\s*)(.+?)(?=\n|$)/gi,
-            /(?:Q\d*[:\-]?\s*|Question\s*\d*[:\-]?\s*)(.+?)(?=\n|$)/gi,
-            /^(.+?)(?=\n|$)/gm
-          ];
-          
-          for (const pattern of faqPatterns) {
-            const faqMatches = faqContent.match(pattern);
-            if (faqMatches && faqMatches.length > 0) {
-              faqsArray = faqMatches.slice(0, faqCount).map((faq, index) => {
-                const question = faq.replace(/^(?:Q\d*[:\-]?\s*|Question\s*\d*[:\-]?\s*)/i, '').trim();
-                // Try to find the answer in the next line or create a meaningful one
-                const lines = faqContent.split('\n');
-                const faqIndex = lines.findIndex(line => line.includes(question));
-                let answer = '';
-                
-                if (faqIndex >= 0 && faqIndex + 1 < lines.length) {
-                  answer = lines[faqIndex + 1].trim();
-                }
-                
-                if (!answer || answer.length < 20) {
-                  answer = `Comprehensive answer about ${question.toLowerCase()}`;
-                }
-                
-                return { question, answer };
-              });
-              console.log('Extracted FAQs:', faqsArray.length);
-              break;
-            }
-          }
+          // Extract FAQs more robustly
+          faqsArray = this.extractFAQsFromSection(trimmedSection, faqCount);
         }
       });
       
@@ -377,11 +361,11 @@ Generate high-quality, informative content that provides real value to readers w
             }
             
             const h2Title = line.replace(/^(SECTION|H2|##|\d+\.|[A-Z][A-Z\s]+:)/, '').trim();
-            currentSection = {
-              h2: h2Title || `Section ${sectionsArray.length + 1}`,
-              paragraphs: [],
-              bullets: []
-            };
+                         currentSection = {
+               section_heading: h2Title || `Section ${sectionsArray.length + 1}`,
+               paragraphs: [],
+               bullets: []
+             };
           } else if (currentSection && line.length > 50) {
             // This might be a paragraph
             if (currentSection.paragraphs.length < 2) {
@@ -415,18 +399,18 @@ Generate high-quality, informative content that provides real value to readers w
           const paragraphs = this.extractParagraphs(content);
           const bullets = this.extractBullets(content);
           
-          sectionsArray.push({
-            h2: h2,
-            paragraphs: paragraphs.length >= 2 ? paragraphs.slice(0, 2) : [
-              content.substring(0, Math.min(200, content.length)),
-              content.substring(Math.min(200, content.length))
-            ],
-            bullets: bullets.length >= 3 ? bullets.slice(0, 4) : [
-              `Key insight about ${h2}`,
-              `Important consideration for ${h2}`,
-              `Benefit of ${h2}`
-            ]
-          });
+                     sectionsArray.push({
+             section_heading: h2,
+             paragraphs: paragraphs.length >= 2 ? paragraphs.slice(0, 2) : [
+               content.substring(0, Math.min(200, content.length)),
+               content.substring(Math.min(200, content.length))
+             ],
+             bullets: bullets.length >= 3 ? bullets.slice(0, 4) : [
+               `Key insight about ${h2}`,
+               `Important consideration for ${h2}`,
+               `Benefit of ${h2}`
+             ]
+           });
         });
         
         console.log('Created sections from H2s:', sectionsArray.length);
@@ -438,11 +422,16 @@ Generate high-quality, informative content that provides real value to readers w
         faqsArray = this.createFAQsFromContent(plainContent, h1, faqCount);
       }
       
-      // Ensure we have an intro
-      if (!intro) {
-        console.log('No intro extracted, creating from content...');
-        intro = this.extractIntroFromContent(plainContent, h1);
-      }
+             // Ensure we have an intro
+       if (!intro) {
+         console.log('No intro extracted, creating from content...');
+         intro = this.extractIntroFromContent(plainContent, h1);
+       } else {
+         console.log('✅ Intro successfully extracted and cleaned');
+       }
+       
+       console.log('Final intro length:', intro.length);
+       console.log('Final intro preview:', intro.substring(0, 150) + '...');
 
       // ENFORCE STRICT SEO LENGTH LIMITS
       const MAX_META_TITLE = 60;
@@ -475,19 +464,19 @@ Generate high-quality, informative content that provides real value to readers w
       console.log(`✅ Final meta title: ${metaTitle.length}/${MAX_META_TITLE} chars`);
       console.log(`✅ Final meta description: ${metaDescription.length}/${MAX_META_DESCRIPTION} chars`);
       
-      const restructuredContent = {
-        head: {
-          title: metaTitle,
-          meta: {
-            description: metaDescription
-          }
-        },
-        body: {
-          h1: h1,
-          intro: intro,
-          sections: sectionsArray,
-          faqs: faqsArray
-        },
+             const restructuredContent = {
+         head: {
+           title: metaTitle,
+           meta: {
+             description: metaDescription
+           }
+         },
+                  body: {
+            page_heading: h1,
+            intro: intro,
+            sections: sectionsArray,
+            faqs: faqsArray
+          },
         identifier: {
           id: public_id,
           handle: handle || this.generateHandle(h1)
@@ -503,9 +492,9 @@ Generate high-quality, informative content that provides real value to readers w
         restructuredContent.head.meta.geo = location;
       }
       
-      console.log('=== FINAL RESTRUCTURED CONTENT ===');
-      console.log('H1:', restructuredContent.body.h1);
-      console.log('Title:', restructuredContent.head.title);
+             console.log('=== FINAL RESTRUCTURED CONTENT ===');
+       console.log('H1:', restructuredContent.body.page_heading);
+       console.log('Title:', restructuredContent.head.title);
       console.log('Meta Description:', restructuredContent.head.meta.description);
       console.log('Intro length:', restructuredContent.body.intro.length);
       console.log('Sections:', restructuredContent.body.sections.length);
@@ -525,22 +514,22 @@ Generate high-quality, informative content that provides real value to readers w
             description: this.generateSEOCompliantDescription(h1, 160)
           }
         },
-        body: {
-          h1: h1,
-          intro: `Comprehensive guide about ${h1}`,
-          sections: h2s.map(h2 => ({
-            h2: h2,
-            paragraphs: [
-              `Detailed information about ${h2}`,
-              `Additional insights about ${h2}`
-            ],
-            bullets: [
-              `Key point 1 about ${h2}`,
-              `Key point 2 about ${h2}`,
-              `Key point 3 about ${h2}`,
-              `Key point 4 about ${h2}`
-            ]
-          })),
+                 body: {
+           page_heading: h1,
+           intro: `Comprehensive guide about ${h1}`,
+           sections: h2s.map(h2 => ({
+             section_heading: h2,
+             paragraphs: [
+               `Detailed information about ${h2}`,
+               `Additional insights about ${h2}`
+             ],
+             bullets: [
+               `Key point 1 about ${h2}`,
+               `Key point 2 about ${h2}`,
+               `Key point 3 about ${h2}`,
+               `Key point 4 about ${h2}`
+             ]
+           })),
           faqs: Array.from({ length: faqCount }, (_, i) => {
             const ordinal = this.getOrdinal(i + 1);
             return {
@@ -598,14 +587,90 @@ Generate high-quality, informative content that provides real value to readers w
   // Helper method to create FAQs from content
   createFAQsFromContent(content, h1, faqCount) {
     const faqs = [];
-    const sentences = content.match(/[^.!?]+[.!?]/g) || [];
+    
+    // Clean the content by removing metadata sections
+    let cleanContent = content;
+    
+    // Remove metadata sections that might be at the beginning
+    cleanContent = cleanContent.replace(/^(H1 Title:|META TITLE:|META DESCRIPTION:|INTRODUCTION:|INTRO:).*?\n/gm, '');
+    
+    // Extract meaningful sentences for FAQ generation
+    const sentences = cleanContent.match(/[^.!?]+[.!?]/g) || [];
+    
+    // Generate contextual questions based on the actual content
+    const contentWords = cleanContent.toLowerCase().split(/\s+/);
+    const keyTerms = contentWords.filter(word => 
+      word.length > 4 && 
+      !['about', 'with', 'from', 'this', 'that', 'they', 'have', 'been', 'will', 'would', 'could', 'should'].includes(word)
+    );
+    
+    // Create questions based on the actual content themes and topics
+    const contextualQuestions = [];
+    
+    // Look for key concepts in the content to generate relevant questions
+    if (keyTerms.length > 0) {
+      // Find the most common meaningful terms
+      const termFrequency = {};
+      keyTerms.forEach(term => {
+        termFrequency[term] = (termFrequency[term] || 0) + 1;
+      });
+      
+      const sortedTerms = Object.entries(termFrequency)
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, Math.min(10, keyTerms.length))
+        .map(([term]) => term);
+      
+      // Generate questions based on the actual content themes
+      sortedTerms.forEach((term, index) => {
+        if (index < faqCount) {
+          contextualQuestions.push(
+            `What is the role of ${term} in ${h1}?`,
+            `How does ${term} affect ${h1}?`,
+            `Why is ${term} important for ${h1}?`,
+            `What are the benefits of ${term} in ${h1}?`
+          );
+        }
+      });
+    }
+    
+    // If we don't have enough contextual questions, create some based on the content structure
+    if (contextualQuestions.length < faqCount) {
+      // Look for specific topics mentioned in the content
+      const topics = sentences.filter(sentence => 
+        sentence.length > 30 && 
+        sentence.length < 200 &&
+        !sentence.includes('H1 Title:') && 
+        !sentence.includes('META')
+      );
+      
+      topics.forEach((topic, index) => {
+        if (contextualQuestions.length < faqCount) {
+          // Extract a key concept from the topic and create a question
+          const words = topic.split(/\s+/).filter(word => word.length > 4);
+          if (words.length > 0) {
+            const keyWord = words[Math.floor(Math.random() * words.length)];
+            contextualQuestions.push(`How does ${keyWord} relate to ${h1}?`);
+          }
+        }
+      });
+    }
     
     // Limit to the requested FAQ count
-    const actualFaqCount = Math.min(faqCount, sentences.length);
+    const actualFaqCount = Math.min(faqCount, contextualQuestions.length);
     
     for (let i = 0; i < actualFaqCount; i++) {
-      const question = sentences[i].trim();
-      const answer = sentences[i + 1] ? sentences[i + 1].trim() : `Comprehensive answer about ${h1}`;
+      const question = contextualQuestions[i];
+      
+      // Find a relevant sentence for the answer
+      let answer = `Based on the content about ${h1}, this aspect is important for understanding the topic.`;
+      
+             if (sentences.length > i) {
+         // Use a sentence that doesn't contain metadata
+         const potentialAnswer = sentences[i].trim();
+         if (potentialAnswer.length > 20 && !potentialAnswer.includes('H1 Title:') && !potentialAnswer.includes('META')) {
+           answer = this.cleanFAQAnswer(potentialAnswer);
+         }
+       }
       
       faqs.push({ question, answer });
     }
@@ -613,19 +678,132 @@ Generate high-quality, informative content that provides real value to readers w
     return faqs;
   }
 
+  // Helper method to clean and format content
+  cleanContent(text) {
+    if (!text) return text;
+    
+    // Remove common metadata prefixes that might appear in content
+    let cleaned = text
+      .replace(/^H1 Title:\s*/i, '') // Remove H1 Title prefix
+      .replace(/^META TITLE:\s*/i, '') // Remove META TITLE prefix
+      .replace(/^META DESCRIPTION:\s*/i, '') // Remove META DESCRIPTION prefix
+      .replace(/^INTRODUCTION:\s*/i, '') // Remove INTRODUCTION prefix
+      .replace(/^INTRO:\s*/i, ''); // Remove INTRO prefix
+    
+    // Remove escaped newlines and format properly
+    cleaned = cleaned
+      .replace(/\\n/g, ' ') // Replace escaped newlines with spaces
+      .replace(/\n+/g, ' ') // Replace actual newlines with spaces
+      .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+      .trim();
+    
+    return cleaned;
+  }
+
+  // Helper method to clean FAQ answers specifically
+  cleanFAQAnswer(text) {
+    if (!text) return text;
+    
+    let cleaned = text;
+    
+    // Remove structural metadata that shouldn't appear in user-facing content
+    cleaned = cleaned.replace(/^(H1 Title:|H2 Sections?:|META TITLE:|META DESCRIPTION:|INTRODUCTION:|INTRO:|SECTION \d+:|BULLET POINTS?:)/gi, '');
+    
+    // Remove bullet point markers that might have been included
+    cleaned = cleaned.replace(/^[•\-\*]\s*/gm, '');
+    
+    // Remove numbered lists that might have been included
+    cleaned = cleaned.replace(/^\d+\.\s*/gm, '');
+    
+    // Remove FAQ markers
+    cleaned = cleaned.replace(/^(Q\d*[:\-]?\s*|Question\s*\d*[:\-]?\s*)/gi, '');
+    
+    // Clean up any remaining structural elements
+    cleaned = cleaned.replace(/^(FAQS?:|FAQ:)/gi, '');
+    
+    // Apply general content cleaning
+    cleaned = this.cleanContent(cleaned);
+    
+    // Ensure we have meaningful content
+    if (!cleaned || cleaned.length < 20) {
+      return 'This aspect is important for understanding the topic and provides valuable insights.';
+    }
+    
+    return cleaned;
+  }
+
+  // Helper method to extract FAQs from a section more robustly
+  extractFAQsFromSection(section, faqCount) {
+    const faqs = [];
+    
+    // Remove the FAQ section header
+    const faqContent = section.replace(/^FAQS?:?/i, '').replace(/^FREQUENTLY ASKED QUESTIONS:?/i, '').trim();
+    
+    // Split into lines and process
+    const lines = faqContent.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    
+    let currentQuestion = '';
+    let currentAnswer = '';
+    let inAnswer = false;
+    
+    for (let i = 0; i < lines.length && faqs.length < faqCount; i++) {
+      const line = lines[i];
+      
+      // Check if this line is a question (starts with Q, Question, or is a question mark)
+      const isQuestion = /^(Q\d*[:\-]?\s*|Question\s*\d*[:\-]?\s*)/i.test(line) || line.includes('?');
+      
+      if (isQuestion) {
+        // Save previous FAQ if we have one
+        if (currentQuestion && currentAnswer) {
+          const cleanQuestion = currentQuestion.replace(/^(Q\d*[:\-]?\s*|Question\s*\d*[:\-]?\s*)/i, '').trim();
+          const cleanAnswer = this.cleanFAQAnswer(currentAnswer);
+          
+          if (cleanQuestion && cleanAnswer) {
+            faqs.push({ question: cleanQuestion, answer: cleanAnswer });
+          }
+        }
+        
+        // Start new FAQ
+        currentQuestion = line;
+        currentAnswer = '';
+        inAnswer = true;
+      } else if (inAnswer) {
+        // This is part of the answer
+        if (currentAnswer) {
+          currentAnswer += ' ' + line;
+        } else {
+          currentAnswer = line;
+        }
+      }
+    }
+    
+    // Add the last FAQ if we have one
+    if (currentQuestion && currentAnswer && faqs.length < faqCount) {
+      const cleanQuestion = currentQuestion.replace(/^(Q\d*[:\-]?\s*|Question\s*\d*[:\-]?\s*)/i, '').trim();
+      const cleanAnswer = this.cleanFAQAnswer(currentAnswer);
+      
+      if (cleanQuestion && cleanAnswer) {
+        faqs.push({ question: cleanQuestion, answer: cleanAnswer });
+      }
+    }
+    
+    console.log('Extracted FAQs from section:', faqs.length);
+    return faqs;
+  }
+
   // Helper method to extract intro from content
   extractIntroFromContent(content, h1) {
     const firstParagraph = content.split(/\n\s*\n/)[0];
     if (firstParagraph && firstParagraph.length > 50) {
-      return firstParagraph;
+      return this.cleanContent(firstParagraph);
     }
     
     const sentences = content.match(/[^.!?]+[.!?]/g) || [];
     if (sentences.length > 0) {
-      return sentences[0].trim();
+      return this.cleanContent(sentences[0].trim());
     }
     
-    return `Welcome to our comprehensive guide about ${h1}. This article will provide you with detailed information and insights to help you understand everything you need to know.`;
+    return `Welcome to our comprehensive guide about ${h1}. This essential topic plays a crucial role in modern web development and technology. In this article, we'll explore everything you need to know about ${h1}, from basic concepts to advanced applications. Whether you're a beginner or an experienced professional, this guide will provide valuable insights and practical knowledge to help you master ${h1} effectively.`;
   }
 
   // NEW METHOD: Generate SEO-compliant meta title
@@ -740,20 +918,20 @@ Generate high-quality, informative content that provides real value to readers w
       throw new Error('FAQs must be a non-empty array');
     }
 
-    // Validate each section
-    content.body.sections.forEach((section, index) => {
-      if (!section.h2 || !section.paragraphs || !section.bullets) {
-        throw new Error(`Section ${index + 1} missing required fields`);
-      }
-      
-      if (!Array.isArray(section.paragraphs) || section.paragraphs.length !== 2) {
-        throw new Error(`Section ${index + 1} must have exactly 2 paragraphs`);
-      }
-      
-      if (!Array.isArray(section.bullets) || section.bullets.length < 3) {
-        throw new Error(`Section ${index + 1} must have at least 3 bullets`);
-      }
-    });
+         // Validate each section
+     content.body.sections.forEach((section, index) => {
+       if (!section.section_heading || !section.paragraphs || !section.bullets) {
+         throw new Error(`Section ${index + 1} missing required fields`);
+       }
+       
+       if (!Array.isArray(section.paragraphs) || section.paragraphs.length !== 2) {
+         throw new Error(`Section ${index + 1} must have exactly 2 paragraphs`);
+       }
+       
+       if (!Array.isArray(section.bullets) || section.bullets.length < 3) {
+         throw new Error(`Section ${index + 1} must have at least 3 bullets`);
+       }
+     });
 
     // Validate each FAQ
     content.body.faqs.forEach((faq, index) => {

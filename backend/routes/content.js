@@ -2,245 +2,152 @@ const express = require('express');
 const Content = require('../models/Content');
 const router = express.Router();
 
-// Save new content to database
-router.post('/', async (req, res) => {
-  try {
-    const {
-      title,
-      topic,
-      content,
-      category = 'general',
-      status = 'draft',
-      handle,
-      faq_count,
-      seo_title,
-      seo_description
-    } = req.body;
-
-    // Validate required fields
-    if (!title || !topic || !content) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: title, topic, and content are required'
-      });
-    }
-
-    // Truncate SEO fields if they exceed database constraints
-    const truncatedSeoTitle = seo_title && seo_title.length > 60 
-      ? seo_title.substring(0, 57) + '...' 
-      : seo_title;
-    
-    const truncatedSeoDescription = seo_description && seo_description.length > 160 
-      ? seo_description.substring(0, 157) + '...' 
-      : seo_description;
-
-    // Create new content
-    const newContent = await Content.create({
-      title,
-      topic,
-      content,
-      category,
-      status,
-      handle,
-      faq_count,
-      seo_title: truncatedSeoTitle,
-      seo_description: truncatedSeoDescription
-    });
-
-    console.log('✅ Content saved to database:', {
-      id: newContent.id,
-      title: newContent.title,
-      handle: newContent.handle,
-      seo_title_length: truncatedSeoTitle?.length || 0,
-      seo_description_length: truncatedSeoDescription?.length || 0
-    });
-
-    res.status(201).json({
-      success: true,
-      message: 'Content saved successfully',
-      data: newContent
-    });
-
-  } catch (error) {
-    console.error('❌ Error saving content:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to save content',
-      details: error.message
-    });
-  }
-});
-
-// Get all content with pagination
+// Get all content (for dashboard)
 router.get('/', async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
-
-    const { count, rows } = await Content.findAndCountAll({
-      limit,
-      offset,
-      order: [['createdAt', 'DESC']]
+    const contents = await Content.findAll({
+      order: [['created_at', 'DESC']]
     });
 
-    res.json({
-      success: true,
-      data: {
-        content: rows,
-        pagination: {
-          current_page: page,
-          total_pages: Math.ceil(count / limit),
-          total_items: count,
-          items_per_page: limit,
-          has_next: page < Math.ceil(count / limit),
-          has_prev: page > 1
-        }
+    // Transform JSON data back to dashboard format
+    const transformedContents = contents.map(content => {
+      const fullContent = content.full_content;
+      
+      // Handle both old and new data structures
+      let title, handle, category, tags, wordCount, faqCount, generationTime, createdAt, updatedAt;
+      
+      if (fullContent) {
+        // New JSON structure
+        title = fullContent.body?.h1 || content.title || 'Untitled';
+        handle = fullContent.identifier?.handle || content.handle || '';
+        category = fullContent.classification?.category || content.category || 'general';
+        tags = fullContent.classification?.tags || (content.tags ? content.tags.split(',').map(tag => tag.trim()) : []);
+        wordCount = fullContent.metadata?.word_count || content.word_count || 0;
+        faqCount = fullContent.metadata?.faq_count || content.faq_count || 0;
+        generationTime = fullContent.metadata?.generation_time || content.generation_time || 0;
+        createdAt = fullContent.metadata?.created_at || content.created_at;
+        updatedAt = fullContent.metadata?.updated_at || content.updated_at;
+      } else {
+        // Fallback to old structure
+        title = content.title || 'Untitled';
+        handle = content.handle || '';
+        category = content.category || 'general';
+        tags = content.tags ? content.tags.split(',').map(tag => tag.trim()) : [];
+        wordCount = content.word_count || 0;
+        faqCount = content.faq_count || 0;
+        generationTime = content.generation_time || 0;
+        createdAt = content.created_at;
+        updatedAt = content.updated_at;
       }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch content',
-      details: error.message
-    });
-  }
-});
 
-// Search content
-router.get('/search', async (req, res) => {
-  try {
-    const { q, category, status, page = 1, limit = 10 } = req.query;
-    const offset = (page - 1) * limit;
-
-    let whereClause = {};
-    
-    if (q) {
-      whereClause = {
-        [require('sequelize').Op.or]: [
-          { title: { [require('sequelize').Op.like]: `%${q}%` } },
-          { topic: { [require('sequelize').Op.like]: `%${q}%` } },
-          { category: { [require('sequelize').Op.like]: `%${q}%` } }
-        ]
+      return {
+        id: content.id,
+        public_id: content.public_id,
+        title: title,
+        handle: handle,
+        category: category,
+        tags: tags,
+        status: content.status,
+        word_count: wordCount,
+        faq_count: faqCount,
+        generation_time: generationTime,
+        created_at: createdAt,
+        updated_at: updatedAt,
+        // Include the full content for compatibility
+        content: fullContent || content.content
       };
-    }
-    
-    if (category) {
-      whereClause.category = category;
-    }
-    
-    if (status) {
-      whereClause.status = status;
-    }
-
-    const { count, rows } = await Content.findAndCountAll({
-      where: whereClause,
-      limit: parseInt(limit),
-      offset,
-      order: [['createdAt', 'DESC']]
     });
 
-    res.json({
-      success: true,
-      data: {
-        content: rows,
-        pagination: {
-          current_page: parseInt(page),
-          total_pages: Math.ceil(count / limit),
-          total_items: count,
-          items_per_page: parseInt(limit),
-          has_next: parseInt(page) < Math.ceil(count / limit),
-          has_prev: parseInt(page) > 1
-        }
-      }
-    });
+    res.json(transformedContents);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to search content',
-      details: error.message
-    });
+    console.error('Error fetching content:', error);
+    res.status(500).json({ error: 'Failed to fetch content', details: error.message });
   }
 });
 
-// Get content by ID
-router.get('/:id', async (req, res) => {
+// Get content by public_id
+router.get('/:public_id', async (req, res) => {
   try {
-    const content = await Content.findByPk(req.params.id);
-    
+    const content = await Content.findOne({
+      where: { public_id: req.params.public_id }
+    });
+
     if (!content) {
-      return res.status(404).json({
-        success: false,
-        error: 'Content not found'
-      });
+      return res.status(404).json({ error: 'Content not found' });
     }
 
-    res.json({
+    // Return both new and old format for compatibility
+    const fullContent = content.full_content;
+    const response = {
       success: true,
-      data: content
-    });
+      public_id: content.public_id,
+      status: content.status,
+      // New format
+      content: fullContent,
+      // Old format for compatibility
+      title: fullContent?.body?.h1 || content.title,
+      handle: fullContent?.identifier?.handle || content.handle,
+      category: fullContent?.classification?.category || content.category,
+      tags: fullContent?.classification?.tags || (content.tags ? content.tags.split(',').map(tag => tag.trim()) : [])
+    };
+
+    res.json(response);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch content',
-      details: error.message
-    });
+    console.error('Error fetching content:', error);
+    res.status(500).json({ error: 'Failed to fetch content', details: error.message });
   }
 });
 
 // Update content status
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:public_id/status', async (req, res) => {
   try {
     const { status } = req.body;
-    const content = await Content.findByPk(req.params.id);
     
+    if (!['draft', 'published', 'archived'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const content = await Content.findOne({
+      where: { public_id: req.params.public_id }
+    });
+
     if (!content) {
-      return res.status(404).json({
-        success: false,
-        error: 'Content not found'
-      });
+      return res.status(404).json({ error: 'Content not found' });
     }
 
     await content.update({ status });
-    
+
     res.json({
       success: true,
       message: 'Status updated successfully',
-      data: content
+      status: content.status
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update status',
-      details: error.message
-    });
+    console.error('Error updating content status:', error);
+    res.status(500).json({ error: 'Failed to update status', details: error.message });
   }
 });
 
 // Delete content
-router.delete('/:id', async (req, res) => {
+router.delete('/:public_id', async (req, res) => {
   try {
-    const content = await Content.findByPk(req.params.id);
-    
+    const content = await Content.findOne({
+      where: { public_id: req.params.public_id }
+    });
+
     if (!content) {
-      return res.status(404).json({
-        success: false,
-        error: 'Content not found'
-      });
+      return res.status(404).json({ error: 'Content not found' });
     }
 
     await content.destroy();
-    
+
     res.json({
       success: true,
       message: 'Content deleted successfully'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to delete content',
-      details: error.message
-    });
+    console.error('Error deleting content:', error);
+    res.status(500).json({ error: 'Failed to delete content', details: error.message });
   }
 });
 

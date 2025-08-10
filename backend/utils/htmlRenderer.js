@@ -19,9 +19,9 @@ class HTMLRenderer {
   generateHTML(content) {
     let html = '';
 
-    // Main H1
-    if (content.h1) {
-      html += `<h1 class="text-4xl font-bold text-gray-900 mb-6">${this.escapeHtml(content.h1)}</h1>`;
+    // Main H1 - Page Heading
+    if (content.page_heading) {
+      html += `<h1 class="text-4xl font-bold text-gray-900 mb-6">${this.escapeHtml(content.page_heading)}</h1>`;
     }
 
     // Introduction
@@ -49,19 +49,19 @@ class HTMLRenderer {
   renderSection(section, index) {
     let html = `<section class="mb-12" id="section-${index + 1}">`;
     
-    // H2 heading
-    if (section.h2) {
-      html += `<h2 class="text-2xl font-semibold text-gray-900 mb-4">${this.escapeHtml(section.h2)}</h2>`;
+    // H2 heading - Section Heading
+    if (section.section_heading) {
+      html += `<h2 class="text-2xl font-semibold text-gray-900 mb-4">${this.escapeHtml(section.section_heading)}</h2>`;
     }
 
-    // Paragraphs
+    // Paragraphs - properly iterate through array
     if (section.paragraphs && Array.isArray(section.paragraphs)) {
       section.paragraphs.forEach((paragraph, pIndex) => {
         html += `<p class="text-gray-700 mb-4 leading-relaxed">${this.escapeHtml(paragraph)}</p>`;
       });
     }
 
-    // Bullet points
+    // Bullet points - properly iterate through array
     if (section.bullets && Array.isArray(section.bullets)) {
       html += `<ul class="list-disc list-inside space-y-2 text-gray-700 ml-4 mb-6">`;
       section.bullets.forEach((bullet, bIndex) => {
@@ -95,7 +95,7 @@ class HTMLRenderer {
     const schema = {
       "@context": "https://schema.org",
       "@type": "Article",
-      "headline": content.h1,
+      "headline": content.page_heading,
       "description": content.intro,
       "articleBody": this.generateHTML(content),
       "datePublished": new Date().toISOString(),
@@ -142,15 +142,15 @@ class HTMLRenderer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${this.escapeHtml(content.h1)}</title>
+    <title>${this.escapeHtml(content.page_heading)}</title>
     <meta name="description" content="${this.escapeHtml(content.intro)}">
-    <meta name="keywords" content="${this.escapeHtml(content.h1.toLowerCase().replace(/\s+/g, ', '))}">
+    <meta name="keywords" content="${this.escapeHtml(content.page_heading.toLowerCase().replace(/\s+/g, ', '))}">
     <meta name="author" content="AI Content Generator">
-    <meta property="og:title" content="${this.escapeHtml(content.h1)}">
+    <meta property="og:title" content="${this.escapeHtml(content.page_heading)}">
     <meta property="og:description" content="${this.escapeHtml(content.intro)}">
     <meta property="og:type" content="article">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="${this.escapeHtml(content.h1)}">
+    <meta name="twitter:title" content="${this.escapeHtml(content.page_heading)}">
     <meta name="twitter:description" content="${this.escapeHtml(content.intro)}">
     ${schemaScripts}
     <style>

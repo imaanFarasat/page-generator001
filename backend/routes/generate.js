@@ -1,6 +1,7 @@
 const express = require('express');
 const { GeminiService } = require('../utils/gemini');
 const Content = require('../models/Content');
+const { sequelize } = require('../database/connection');
 
 const router = express.Router();
 
@@ -10,8 +11,9 @@ const generateUniqueHandle = async (baseHandle, maxAttempts = 10) => {
   let attempt = 1;
   
   while (attempt <= maxAttempts) {
+    // Query using JSON path to check handle inside full_content
     const existingContent = await Content.findOne({
-      where: { handle: handle }
+      where: sequelize.literal(`JSON_EXTRACT(full_content, '$.identifier.handle') = '${handle}'`)
     });
     
     if (!existingContent) {
@@ -33,6 +35,9 @@ const geminiService = new GeminiService();
 // Generate content
 router.post('/content', async (req, res) => {
   try {
+    console.log('=== CONTENT GENERATION REQUEST ===');
+    console.log('Request body:', req.body);
+    
     const { h1, h2s, handle, faqCount = 20, location, category, tags } = req.body;
     const startTime = Date.now();
 
@@ -59,10 +64,15 @@ router.post('/content', async (req, res) => {
       });
     }
 
+    console.log('=== VALIDATION PASSED ===');
+    console.log('H1:', h1);
+    console.log('Valid H2s:', validH2s);
+    console.log('FAQ Count:', faqCount);
+
     // Check for duplicate handle and generate unique one if needed
     if (handle) {
       const existingContent = await Content.findOne({
-        where: { handle: handle }
+        where: sequelize.literal(`JSON_EXTRACT(full_content, '$.identifier.handle') = '${handle}'`)
       });
       
       if (existingContent) {
@@ -83,8 +93,14 @@ router.post('/content', async (req, res) => {
       });
     }
 
+    console.log('=== CALLING GEMINI SERVICE ===');
+    
     // Generate content using Gemini AI
     const content = await geminiService.generateContent(h1, validH2s, faqCount, location, handle, category, tags);
+    
+    console.log('=== GEMINI RESPONSE ===');
+    console.log('Content keys:', Object.keys(content));
+    console.log('Raw content length:', content.rawContent?.length || 0);
     
     // Return raw content for user review instead of saving immediately
     res.json({
@@ -99,7 +115,9 @@ router.post('/content', async (req, res) => {
     });
 
   } catch (error) {
+    console.error('=== CONTENT GENERATION ERROR ===');
     console.error('Error generating content:', error);
+    console.error('Error stack:', error.stack);
     
     // Provide more specific error messages
     if (error.message.includes('GEMINI_API_KEY')) {
@@ -126,6 +144,7 @@ router.post('/content', async (req, res) => {
 router.post('/save', async (req, res) => {
   try {
     const { plainContent, h1, h2s, handle, faqCount, location, category, tags } = req.body;
+    const startTime = Date.now();
 
     if (!plainContent || !h1 || !h2s || !Array.isArray(h2s) || h2s.length === 0) {
       return res.status(400).json({ 
@@ -143,46 +162,122 @@ router.post('/save', async (req, res) => {
     const geminiService = new GeminiService();
     const structuredContent = await geminiService.restructureContent(plainContent, h1, h2s, faqCount, location, handle, category, tags);
 
-    // Create the content object using the correct model structure
-    const contentData = {
-      title: h1,
-      handle: handle,
-      topic: `${h1} - ${h2s.join(', ')}`,
-      content: structuredContent,
-      category: 'general',
-      status: 'draft',
-      gemini_model: 'gemini-1.5-pro',
-      generation_time: Date.now(),
-      tags: tags ? (Array.isArray(tags) ? tags.join(', ') : tags) : null
+    console.log('=== STRUCTURED CONTENT ===');
+    console.log('Structured content keys:', Object.keys(structuredContent));
+    console.log('Has body:', !!structuredContent.body);
+    console.log('Has identifier:', !!structuredContent.identifier);
+
+    // Calculate metadata
+    const generationTime = Date.now() - startTime;
+    const wordCount = calculateWordCount(structuredContent);
+    const faqCountActual = structuredContent.body?.faqs?.length || 0;
+
+    // Build the complete full_content JSON
+    const fullContent = {
+      ...structuredContent,
+      metadata: {
+        generation_time: generationTime,
+        word_count: wordCount,
+        faq_count: faqCountActual,
+        gemini_model: 'gemini-1.5-pro',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
     };
 
-    // Save to database
-    const savedContent = await Content.create(contentData);
+    console.log('=== FULL CONTENT ===');
+    console.log('Full content keys:', Object.keys(fullContent));
+    console.log('Public ID:', structuredContent.identifier?.id);
 
-    console.log('=== CONTENT SAVED SUCCESSFULLY ===');
-    console.log('Content ID:', savedContent.id);
-    console.log('Public ID:', savedContent.public_id);
-    console.log('Structured content keys:', Object.keys(savedContent.content));
+    // Create the content object using the new model structure
+    const contentData = {
+      public_id: structuredContent.identifier.id,
+      full_content: fullContent,
+      status: 'draft'
+    };
+
+    console.log('=== CONTENT DATA ===');
+    console.log('Content data keys:', Object.keys(contentData));
+    console.log('Public ID value:', contentData.public_id);
+    console.log('Full content type:', typeof contentData.full_content);
+    console.log('Full content is valid JSON:', JSON.stringify(contentData.full_content).substring(0, 200) + '...');
+
+    // Save to database
+    let savedContent;
+    try {
+      savedContent = await Content.create(contentData);
+      console.log('=== CONTENT SAVED SUCCESSFULLY ===');
+      console.log('Content ID:', savedContent.id);
+      console.log('Public ID:', savedContent.public_id);
+      console.log('Generation Time:', generationTime + 'ms');
+      console.log('Word Count:', wordCount);
+      console.log('FAQ Count:', faqCountActual);
+    } catch (createError) {
+      console.error('=== CONTENT CREATE ERROR ===');
+      console.error('Create error:', createError);
+      console.error('Create error message:', createError.message);
+      console.error('Create error stack:', createError.stack);
+      throw createError;
+    }
 
     res.json({
       success: true,
-      content: savedContent.content,
-      handle: handle,
+      content: fullContent,
       public_id: savedContent.public_id,
       message: 'Content saved to database successfully',
       id: savedContent.id,
-      originalH2s: h2s,
-      cleanedH2s: h2s
+      metadata: {
+        generation_time: generationTime,
+        word_count: wordCount,
+        faq_count: faqCountActual
+      }
     });
 
   } catch (error) {
     console.error('Error saving content to database:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       error: 'Failed to save content to database',
       details: error.message 
     });
   }
 });
+
+// Helper function to calculate word count
+function calculateWordCount(content) {
+  let wordCount = 0;
+  
+  // Count intro
+  if (content.body.intro) {
+    wordCount += content.body.intro.split(' ').length;
+  }
+  
+  // Count sections
+  if (content.body.sections) {
+    content.body.sections.forEach(section => {
+      if (section.paragraphs) {
+        section.paragraphs.forEach(paragraph => {
+          wordCount += paragraph.split(' ').length;
+        });
+      }
+      if (section.bullets) {
+        section.bullets.forEach(bullet => {
+          wordCount += bullet.split(' ').length;
+        });
+      }
+    });
+  }
+  
+  // Count FAQs
+  if (content.body.faqs) {
+    content.body.faqs.forEach(faq => {
+      wordCount += faq.question.split(' ').length;
+      wordCount += faq.answer.split(' ').length;
+    });
+  }
+  
+  return wordCount;
+}
 
 // Simple status endpoint (no database)
 router.get('/status', async (req, res) => {
